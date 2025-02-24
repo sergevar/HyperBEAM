@@ -75,21 +75,18 @@ attested(Msg, Req, Opts) ->
 
 %% @doc Verify an ANS-104 attestation.
 verify(Msg, _Req, _Opts) ->
-	MsgWithoutPriv = maps:remove(<<"priv">>, Msg), % Remove "priv" (with original_tags)
+    MsgWithoutPriv = maps:remove(<<"priv">>, Msg), % Remove "priv" (with original_tags)
     MsgWithoutAttestations = maps:without([<<"attestations">>], MsgWithoutPriv),
     TX = to(MsgWithoutAttestations),
-
-	% Reinject "priv" before verifying
-	PrivMap = maps:get(<<"priv">>, Msg, #{}),
-	case maps:find(<<"original_tags">>, PrivMap) of
-		{ok, OrigTags} ->
-			TXFixed = TX#tx { tags = OrigTags };
-		error ->
-			TXFixed = TX
-	end,
-    Res = ar_bundles:verify_item(TXFixed),
-
-    {ok, Res}.
+    % Reinject "priv" before verifying
+    PrivMap = maps:get(<<"priv">>, Msg, #{}),
+    case maps:find(<<"original_tags">>, PrivMap) of
+        {ok, OrigTags} ->
+            TXFixed = TX#tx { tags = OrigTags };
+        error ->
+            TXFixed = TX
+    end,
+    ar_bundles:verify_item(TXFixed).
 
 %% @doc Convert a #tx record into a message map recursively.
 from(Binary) when is_binary(Binary) -> Binary;
