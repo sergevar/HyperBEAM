@@ -75,9 +75,20 @@ attested(Msg, Req, Opts) ->
 
 %% @doc Verify an ANS-104 attestation.
 verify(Msg, _Req, _Opts) ->
-    MsgWithoutAttestations = maps:without([<<"attestations">>], Msg),
+	MsgWithoutPriv = maps:remove(<<"priv">>, Msg), % Remove "priv" (with original_tags)
+    MsgWithoutAttestations = maps:without([<<"attestations">>], MsgWithoutPriv),
     TX = to(MsgWithoutAttestations),
-    Res = ar_bundles:verify_item(TX),
+
+	% Reinject "priv" before verifying
+	PrivMap = maps:get(<<"priv">>, Msg, #{}),
+	case maps:find(<<"original_tags">>, PrivMap) of
+		{ok, OrigTags} ->
+			TXFixed = TX#tx { tags = OrigTags };
+		error ->
+			TXFixed = TX
+	end,
+    Res = ar_bundles:verify_item(TXFixed),
+
     {ok, Res}.
 
 %% @doc Convert a #tx record into a message map recursively.
@@ -107,17 +118,26 @@ do_from(RawTX) ->
         ),
     % Generate a TABM from the tags.
     MapWithoutData = maps:merge(TXKeysMap, maps:from_list(TX#tx.tags)),
+
+	% Stash original tags in `priv.original_tags' - untouched by normalization/lowercasing/etc.
+	% Necessary for reconstructing deephash material in ar_bundles that would match
+	% the signature and make ar_bundle:verify_item pass
+	OriginalTags = TX#tx.tags,
+	PrivMap0 = maps:get(<<"priv">>, MapWithoutData, #{}),
+	PrivMap1 = maps:put(<<"original_tags">>, OriginalTags, PrivMap0),
+	MapWithPreservedTags = MapWithoutData#{ <<"priv">> => PrivMap1 },
+
     DataMap =
         case TX#tx.data of
             Data when is_map(Data) ->
                 % If the data is a map, we need to recursively turn its children
                 % into messages from their tx representations.
                 maps:merge(
-                    MapWithoutData,
+                    MapWithPreservedTags,
                     maps:map(fun(_, InnerValue) -> from(InnerValue) end, Data)
                 );
-            Data when Data == ?DEFAULT_DATA -> MapWithoutData;
-            Data when is_binary(Data) -> MapWithoutData#{ <<"data">> => Data };
+            Data when Data == ?DEFAULT_DATA -> MapWithPreservedTags;
+            Data when is_binary(Data) -> MapWithPreservedTags#{ <<"data">> => Data };
             Data ->
                 ?event({unexpected_data_type, {explicit, Data}}),
                 ?event({was_processing, {explicit, TX}}),
@@ -151,8 +171,14 @@ do_from(RawTX) ->
                     }
                 }
         end,
-    Res = maps:without(?FILTERED_TAGS, WithAttestations),
-    ?event({message_after_attestations, Res}),
+    ResTmp = maps:without(?FILTERED_TAGS, WithAttestations),
+    ?event({message_after_attestations, ResTmp}),
+
+	% We lost `priv` after hb_converge:normalize_keys and re-serializing it via codec
+	% so we need to re-inject it
+	PrivMap = maps:get(<<"priv">>, WithAttestations, #{}),
+	Res = ResTmp#{ <<"priv">> => PrivMap },
+
     Res.
 
 %% @doc Internal helper to translate a message to its #tx record representation,
@@ -226,6 +252,15 @@ to(RawTABM) when is_map(RawTABM) ->
             {NormalizedMsgKeyMap, []},
             hb_message:default_tx_list()
         ),
+
+	% % If priv.original_tags exists, override computed tags with it
+	% PrivMap = maps:get(<<"priv">>, RemainingMap, #{}),
+	% FinalTags =
+	% 	case maps:find(<<"original_tags">>, PrivMap) of
+	% 		{ok, OrigTags} -> OrigTags;
+	% 		error -> RemainingMap#tx.tags
+	% 	end,
+
     % Rebuild the tx record from the new list of fields and values.
     TXWithoutTags = list_to_tuple([tx | lists:reverse(BaseTXList)]),
     % Calculate which set of the remaining keys will be used as tags.
