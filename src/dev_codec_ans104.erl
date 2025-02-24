@@ -120,9 +120,9 @@ do_from(RawTX) ->
     % Necessary for reconstructing deephash material in ar_bundles that would match
     % the signature and make ar_bundle:verify_item pass
     OriginalTags = TX#tx.tags,
-    PrivMap0 = maps:get(<<"priv">>, MapWithoutData, #{}),
-    PrivMap1 = maps:put(<<"original_tags">>, OriginalTags, PrivMap0),
-    MapWithPreservedTags = MapWithoutData#{ <<"priv">> => PrivMap1 },
+    OriginalPriv = maps:get(<<"priv">>, MapWithoutData, #{}),
+    PrivWithOriginalTags = maps:put(<<"original_tags">>, OriginalTags, OriginalPriv),
+    MapWithPreservedTags = MapWithoutData#{ <<"priv">> => PrivWithOriginalTags },
 
     DataMap =
         case TX#tx.data of
